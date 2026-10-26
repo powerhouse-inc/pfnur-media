@@ -1,0 +1,47 @@
+name: Assemble full interview media
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: expert-interview-v1-assembly
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Assemble and verify the full interview
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_sha='0af73aa3f080e99bc518fe9c727cdd1b1f221211c87a2c3d0e28bc61eb7a4d0f'
+          expected_size=165306916
+          printf -v expected_record 'uploaded\t%s\tsha256:%s' "$expected_size" "$expected_sha"
+          asset_record="$(gh api "repos/$GH_REPO/releases/424692486" --jq '.assets[] | select(.name == "full.mp4") | [.state, .size, .digest] | @tsv')"
+          if [[ -n "$asset_record" ]]; then
+            if [[ "$asset_record" != "$expected_record" ]]; then
+              echo 'An unexpected full.mp4 asset already exists; refusing to overwrite it.' >&2
+              exit 1
+            fi
+            echo 'The full interview is already uploaded and verified.'
+            exit 0
+          fi
+          mkdir -p parts
+          for index in {000..009}; do
+            gh release download expert-interview-v1 --pattern "full.mp4.part-$index" --dir parts --clobber
+          done
+          cat parts/full.mp4.part-{000..009} > full.mp4
+          [[ "$(wc -c < full.mp4)" -eq "$expected_size" ]]
+          printf '%s  full.mp4\n' "$expected_sha" | sha256sum --check --status
+          gh release upload expert-interview-v1 'full.mp4#Full interview (horizontal)'
+          asset_record="$(gh api "repos/$GH_REPO/releases/424692486" --jq '.assets[] | select(.name == "full.mp4") | [.state, .size, .digest] | @tsv')"
+          [[ "$asset_record" == "$expected_record" ]]
+          echo 'The full interview was uploaded and verified.'
